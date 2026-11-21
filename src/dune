@@ -1,0 +1,21 @@
+(library
+ (name fetch)
+ (public_name fetch)
+ (libraries unix)
+ (foreign_stubs (language c) (names fetch_stubs))
+ (foreign_archives fetch_rs)
+ (c_library_flags (-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc))
+ (js_of_ocaml (javascript_files fetch_runtime.js))
+ (wasm_of_ocaml (javascript_files fetch_runtime_wasm.js) (wasm_files fetch_runtime.wat)))
+
+(data_only_dirs rust)
+
+(rule
+ (targets libfetch_rs.a dllfetch_rs.so)
+ (deps rust/Cargo.toml rust/Cargo.lock (glob_files_rec rust/src/**.rs))
+ (action
+  (no-infer
+   (progn
+    (run cargo build --release --quiet --locked --manifest-path rust/Cargo.toml --features %{env:FETCH_RS_FEATURES=})
+    (copy rust/target/release/libfetch_rs.a libfetch_rs.a)
+    (copy rust/target/release/libfetch_rs.so dllfetch_rs.so)))))

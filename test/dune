@@ -1,0 +1,122 @@
+; Tests: `dune test` runs
+; - the Alcotest suites, native and bytecode, each starting its own test
+;   server (server/test_server.ml);
+; - the cram tests native.t, byte.t, js.t and wasm.t: the shared cases run
+;   from the event loop (run_cases), and how programs end (exit code, fatal
+;   errors), on each backend;
+; - on OCaml 5, test_direct and direct.t, for fetch.direct.
+
+; ---- Alcotest suites
+; A tests stanza runs the native executable. The bytecode one is built with
+; byte_complete (the Rust stubs linked in, no dllfetch_rs.so to find at run
+; time) and run by the rules below.
+
+(tests
+ (names test_local test_background)
+ (modes byte_complete exe)
+ (modules test_local test_background)
+ (libraries test_server test_cases fetch alcotest unix)
+ (deps server.js))
+
+(tests
+ (names test_direct)
+ (modes byte_complete exe)
+ (modules test_direct)
+ (enabled_if (>= %{ocaml_version} 5.0))
+ (libraries test_server test_cases fetch fetch.direct alcotest unix)
+ (deps server.js))
+
+(tests
+ (names test_lwt)
+ (modes byte_complete exe)
+ (modules test_lwt)
+ (build_if %{lib-available:fetch.lwt})
+ (libraries test_server test_cases fetch fetch.lwt alcotest alcotest-lwt lwt lwt.unix unix)
+ (deps server.js))
+
+(tests
+ (names test_eio)
+ (modes byte_complete exe)
+ (modules test_eio)
+ (build_if %{lib-available:fetch.eio})
+ (libraries test_server test_cases fetch fetch.eio alcotest eio eio.unix eio_main eio_posix unix)
+ (deps server.js))
+
+(rule
+ (alias runtest)
+ (deps server.js)
+ (action (run %{dep:test_local.bc.exe})))
+
+(rule
+ (alias runtest)
+ (deps server.js)
+ (action (run %{dep:test_background.bc.exe})))
+
+(rule
+ (alias runtest)
+ (enabled_if (>= %{ocaml_version} 5.0))
+ (deps server.js)
+ (action (run %{dep:test_direct.bc.exe})))
+
+(rule
+ (alias runtest)
+ (enabled_if %{lib-available:fetch.lwt})
+ (deps server.js)
+ (action (run %{dep:test_lwt.bc.exe})))
+
+(rule
+ (alias runtest)
+ (enabled_if %{lib-available:fetch.eio})
+ (deps server.js)
+ (action (run %{dep:test_eio.bc.exe})))
+
+; ---- Programs run by the cram tests, on every backend
+
+(executables
+ (names run_cases crash exit_cb raise_at_exit exn_cb)
+ (modes byte_complete exe js wasm)
+ (modules run_cases crash exit_cb raise_at_exit exn_cb)
+ (libraries test_cases fetch))
+
+(executable
+ (name exn_direct)
+ (modes byte_complete exe js wasm)
+ (modules exn_direct)
+ (enabled_if (>= %{ocaml_version} 5.0))
+ (js_of_ocaml
+  (flags (:standard --effects=cps))
+  (build_runtime_flags (:standard --effects=cps)))
+ (wasm_of_ocaml
+  (flags (:standard --effects=cps)))
+ (libraries test_cases fetch.direct))
+
+(cram
+ (deps server.sh server.js))
+
+(cram
+ (applies_to native.t)
+ (deps run_cases.exe crash.exe exit_cb.exe raise_at_exit.exe exn_cb.exe))
+
+(cram
+ (applies_to byte.t)
+ (deps run_cases.bc.exe crash.bc.exe exit_cb.bc.exe raise_at_exit.bc.exe exn_cb.bc.exe))
+
+(cram
+ (applies_to js.t)
+ (deps run_cases.bc.js crash.bc.js exit_cb.bc.js raise_at_exit.bc.js exn_cb.bc.js))
+
+(cram
+ (applies_to wasm.t)
+ (deps
+  (glob_files *.bc.wasm.js)
+  (glob_files_rec *.bc.wasm.assets/**)))
+
+(cram
+ (applies_to direct.t)
+ (enabled_if (>= %{ocaml_version} 5.0))
+ (deps
+  exn_direct.exe
+  exn_direct.bc.exe
+  exn_direct.bc.js
+  exn_direct.bc.wasm.js
+  (glob_files_rec exn_direct.bc.wasm.assets/**)))

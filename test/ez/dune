@@ -1,0 +1,37 @@
+; ez_api engines (built when ez_api is installed).
+
+(library
+ (name echo)
+ (modules echo)
+ (optional)
+ (libraries ez_api json-data-encoding))
+
+(tests
+ (names test_ez_lwt)
+ (modes byte_complete exe)
+ (modules test_ez_lwt)
+ (build_if %{lib-available:fetch.ez_api_lwt})
+ (libraries echo test_server test_cases ez_api ez_api.req_lwt fetch.ez_api_lwt alcotest alcotest-lwt lwt lwt.unix unix)
+ (deps ../server.js))
+
+(tests
+ (names test_ez_eio)
+ (modes byte_complete exe)
+ (modules test_ez_eio)
+ (build_if %{lib-available:fetch.ez_api_eio})
+ (libraries echo test_server test_cases ez_api ez_api.req_eio fetch.ez_api_eio alcotest eio eio.unix eio_main unix)
+ (deps ../server.js))
+
+; the bytecode versions (see ../dune)
+
+(rule
+ (alias runtest)
+ (enabled_if %{lib-available:fetch.ez_api_lwt})
+ (deps ../server.js)
+ (action (run %{dep:test_ez_lwt.bc.exe})))
+
+(rule
+ (alias runtest)
+ (enabled_if %{lib-available:fetch.ez_api_eio})
+ (deps ../server.js)
+ (action (run %{dep:test_ez_eio.bc.exe})))

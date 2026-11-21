@@ -1,0 +1,6 @@
+(library
+ (name fetch_ez_api_lwt)
+ (public_name fetch.ez_api_lwt)
+ (optional)
+ (implements ez_api.req_lwt_dp)
+ (libraries fetch fetch.lwt lwt ez_api.request_lwt ez_api.request_verbose))

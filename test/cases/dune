@@ -1,0 +1,5 @@
+; Test cases and helpers shared by the tests of every backend.
+(library
+ (name test_cases)
+ (modules cases)
+ (libraries fetch unix))

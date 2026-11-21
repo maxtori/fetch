@@ -1,0 +1,4 @@
+; Starts ../server.js for an Alcotest suite (native/bytecode).
+(library
+ (name test_server)
+ (libraries test_cases unix))

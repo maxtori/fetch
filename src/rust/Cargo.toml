@@ -1,0 +1,26 @@
+[package]
+name = "fetch_rs"
+version = "0.1.0"
+edition = "2021"
+# Minimum Rust version needed by the dependencies (icu_* crates, via url).
+rust-version = "1.88"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[features]
+# Off by default: ask servers for gzip and decompress responses. Enable with
+#   FETCH_RS_FEATURES=gzip dune build
+gzip = ["reqwest/gzip"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "sync"] }
+libc = "0.2"
+# TLS: rustls with the ring crypto provider (installed in lib.rs), and the
+# platform certificate verifier. No aws-lc.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[profile.release]
+lto = "thin"

@@ -1,0 +1,27 @@
+; Uses only [fetch]: no effects needed on JS or Wasm.
+(executable
+ (name callbacks)
+ (modes byte_complete exe js wasm)
+ (modules callbacks)
+ (libraries fetch unix))
+
+; Uses [fetch.direct] (OCaml 5 only): effects must be enabled on JS (CPS), and on Wasm when
+; the engine lacks JSPI (node < 25), so CPS there too.
+(executable
+ (name direct)
+ (modes byte_complete exe js wasm)
+ (modules direct)
+ (enabled_if (>= %{ocaml_version} 5.0))
+ (js_of_ocaml
+  (flags (:standard --effects=cps))
+  (build_runtime_flags (:standard --effects=cps)))
+ (wasm_of_ocaml
+  (flags (:standard --effects=cps)))
+ (libraries fetch fetch.direct unix))
+
+; A daemon polling URLs at a fixed interval (callbacks and Fetch.after).
+(executable
+ (name daemon)
+ (modes byte_complete exe js wasm)
+ (modules daemon)
+ (libraries fetch unix))

@@ -1,0 +1,6 @@
+(library
+ (name fetch_ez_api_eio)
+ (public_name fetch.ez_api_eio)
+ (optional)
+ (implements ez_api.req_eio)
+ (libraries fetch fetch.eio eio ez_api ez_api.request_eio ez_api.request_verbose))
