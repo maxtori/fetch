@@ -2,4 +2,4 @@
  (name fetch_eio)
  (public_name fetch.eio)
  (optional)
- (libraries fetch eio eio.unix))
+ (libraries fetch evloop.eio eio))

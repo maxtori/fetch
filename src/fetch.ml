@@ -84,58 +84,59 @@ external prim_stream_read_bigstring :
   = "caml_fetch_stream_read_bigstring"
 
 external prim_stream_close : stream_id -> unit = "caml_fetch_stream_close"
-external prim_run : unit -> unit = "caml_fetch_run"
 external prim_dispatch : unit -> unit = "caml_fetch_dispatch"
-external prim_fd : unit -> Unix.file_descr option = "caml_fetch_fd"
 external prim_use_background : unit -> unit = "caml_fetch_use_background"
-external named_value : string -> Obj.t option = "caml_fetch_named_value"
+external prim_run_local_until : Unix.file_descr -> bool = "caml_fetch_run_local_until"
+external prim_set_wake_fd : Unix.file_descr -> unit = "caml_fetch_set_wake_fd"
 
-(* Event loop *)
+(* Event loop: fetch is a source of Evloop's loop (native).
+
+   - Background mode (an external loop drives Evloop's): completions are
+     delivered on each turn ([run_ready]).
+   - Local mode: requests only progress inside tokio, on this thread; the
+     loop lets tokio run when it has nothing else to do ([block]), until the
+     requests are done or another source has work (the wakeup fd). *)
 
 let is_js = match Sys.backend_type with Sys.Other _ -> true | _ -> false
-let in_run = ref false
 
-let run () =
-  if !in_run then failwith "Fetch.run: already running (nested call)";
-  in_run := true;
-  Fun.protect ~finally:(fun () -> in_run := false) prim_run
+(* Requests and timers started and not yet delivered to their callback. *)
+let pending_count = ref 0
+let pending () = !pending_count
 
-(* Implicit loop at exit (native/bytecode only)
+(* Callbacks run: progress for the loop. *)
+let deliveries = ref 0
+let delivered () = decr pending_count; incr deliveries
 
-   Like in JS, the loop runs once the main program is done. It is skipped
-   when the program is dying from an uncaught exception, and when [exit] is
-   called from a callback (the loop is already running). *)
+let source = {
+  Evloop.run_ready = (fun () ->
+    let before = !deliveries in
+    prim_dispatch ();
+    !deliveries <> before);
+  ready = (fun () -> false);
+  waiting = (fun () -> !pending_count > 0);
+  block = (fun () -> prim_run_local_until (Evloop.wake_fd ()));
+}
 
-let crashing = ref false
+let registered = ref false
+let background = ref false
 
-(* At-exit handlers also run when the program dies from an uncaught exception,
-   with nothing telling them apart from a normal exit. The runtime reports
-   such exceptions through the named value below (registered by Printexc,
-   which is initialised before this module), so wrap it to record the crash. *)
-let watch_uncaught_exceptions () =
-  (* Referencing Printexc forces it to be linked and initialised first. *)
-  ignore (Printexc.backtrace_status ());
-  let name = "Printexc.handle_uncaught_exception" in
-  Option.iter (fun h ->
-    let handler : exn -> bool -> unit = Obj.obj h in
-    Callback.register name (fun exn debugger ->
-      crashing := true;
-      handler exn debugger)
-  ) @@ named_value name
+(* Before each request or timer: join the loop, and use background mode if
+   another loop drives it. *)
+let prepare () =
+  if not is_js then begin
+    if not !registered then begin
+      registered := true;
+      Evloop.ensure_loop_at_exit ();
+      prim_set_wake_fd (Evloop.wake_write_fd ());
+      Evloop.register source
+    end;
+    if Evloop.is_external () && not !background then begin
+      background := true;
+      prim_use_background ()
+    end
+  end
 
-let loop_at_exit () =
-  (* If a callback raises here, the exception escapes from the exit handlers
-     and the runtime reports it as uncaught (exit code 2), as for any other
-     exit handler. [crashing] is then set, so the loop is not run again. *)
-  if not (!crashing || !in_run) then run ()
-
-let at_exit_registered = ref false
-
-let ensure_loop_at_exit () =
-  if not (is_js || !at_exit_registered) then (
-    at_exit_registered := true;
-    watch_uncaught_exceptions ();
-    at_exit loop_at_exit)
+let run = Evloop.run
 
 (* Requests *)
 
@@ -144,12 +145,8 @@ let string_of_meth = function
   | `PATCH -> "PATCH" | `HEAD -> "HEAD" | `OPTIONS -> "OPTIONS"
   | `Other m -> m
 
-(* Requests started and not yet delivered to their callback. *)
-let pending_count = ref 0
-let pending () = !pending_count
-
 let wrap k r =
-  decr pending_count;
+  delivered ();
   match r with
   | Ok (status, headers, body) -> k (Ok { status; headers; body })
   | Error _ as e -> k e
@@ -161,7 +158,7 @@ let timeout_arg = function
 
 let req ?(meth = `GET) ?(headers = []) ?body ?timeout url k =
   let timeout = timeout_arg timeout in
-  ensure_loop_at_exit ();
+  prepare ();
   prim_request (string_of_meth meth) url (Array.of_list headers) body timeout (wrap k);
   (* after the call: if it raises, nothing is pending. Callbacks are never
      called synchronously, so the count cannot go negative. *)
@@ -169,7 +166,7 @@ let req ?(meth = `GET) ?(headers = []) ?body ?timeout url k =
 
 let req_bs ?(meth = `GET) ?(headers = []) ?body ?timeout url k =
   let timeout = timeout_arg timeout in
-  ensure_loop_at_exit ();
+  prepare ();
   prim_request_bigstring (string_of_meth meth) url (Array.of_list headers) body timeout (wrap k);
   incr pending_count
 
@@ -183,12 +180,12 @@ type timer = { mutable live : bool; mutable id : timer_id option }
 
 let timer seconds k =
   if Float.is_nan seconds then invalid_arg "Fetch.timer: NaN";
-  ensure_loop_at_exit ();
+  prepare ();
   let t = { live = true; id = None } in
   t.id <- Some (prim_after seconds (fun () ->
     if t.live then begin
       t.live <- false;
-      decr pending_count;
+      delivered ();
       k ()
     end));
   incr pending_count;
@@ -224,10 +221,10 @@ let close s =
 
 let req_stream ?(meth = `GET) ?(headers = []) ?body ?timeout url k =
   let timeout = timeout_arg timeout in
-  ensure_loop_at_exit ();
+  prepare ();
   let id = ref None in
   id := Some (prim_stream_open (string_of_meth meth) url (Array.of_list headers) body timeout (fun r ->
-    decr pending_count;
+    delivered ();
     match r with
     | Ok (status, headers, ()) ->
       let s = { id = Option.get !id; state = Idle } in
@@ -247,7 +244,7 @@ let read_with prim ?timeout s k =
   | Closed -> after 0. (fun () -> k (Error "closed"))
   | Idle ->
     prim s.id timeout (fun r ->
-      decr pending_count;
+      delivered ();
       (* if [close] was called meanwhile, the stream stays closed *)
       if s.state = Reading then
         s.state <- (match r with Ok (Some _) -> Idle | Ok None -> Ended | Error _ -> Closed);
@@ -259,8 +256,8 @@ let read_with prim ?timeout s k =
 let read ?timeout s k = read_with prim_stream_read ?timeout s k
 let read_bs ?timeout s k = read_with prim_stream_read_bigstring ?timeout s k
 
-(* Integration with other event loops *)
+(* Integration with other event loops: Evloop's *)
 
-let use_external_loop () = if not is_js then prim_use_background ()
-let fd () = if is_js then None else prim_fd ()
-let dispatch () = if not is_js then prim_dispatch ()
+let use_external_loop () = Evloop.use_external_loop ()
+let fd = Evloop.fd
+let dispatch = Evloop.dispatch

@@ -7,6 +7,7 @@
  (synopsis "Tiny async HTTP client: Rust/tokio on native, fetch on JS")
  (depends
   (ocaml (>= 4.12))
+  evloop
   (conf-rust-2021 :build)
   (alcotest :with-test)
   (alcotest-lwt :with-test))

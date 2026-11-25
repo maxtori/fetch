@@ -74,6 +74,8 @@ src/fetch_runtime.wat        wasm_of_ocaml primitives (OCaml <-> JS value conver
 src/fetch_runtime_wasm.js      ... and their JS helper, which calls the host `fetch`
 src/fetch_stubs.c            C glue: OCaml values <-> plain C data
 src/rust/                    Rust primitives -> reqwest + rustls (ring) on tokio
+src/localize.sh              keeps only the C entry points of the Rust library global,
+                             so that a program can link other Rust libraries (idb)
 src/direct/fetch_direct.ml   effect handler, fibers, promises
 src/lwt/, src/eio/           fetch.lwt and fetch.eio
 src/lwt/ez_api/, src/eio/ez_api/  ez_api engines (fetch.ez_api_lwt, fetch.ez_api_eio)
@@ -84,32 +86,38 @@ test/                        tests (`dune test`, see "Tests" below)
 ```
 
 The primitives (`caml_fetch_request`, `caml_fetch_request_bigstring`,
-`caml_fetch_run`, `caml_fetch_dispatch`, `caml_fetch_fd`) are declared once as `external`s and implemented three
+`caml_fetch_dispatch`, `caml_fetch_run_local_until`, ...) are declared once as `external`s and implemented three
 times. Dune picks the C/Rust ones for native/bytecode, the JS ones for
 js_of_ocaml and the WAT ones for wasm_of_ocaml, so there is no virtual
 library or functor.
+
+The event loop is [evloop](../evloop)'s: fetch registers as one of its
+sources, so a program using other libraries built the same way (idb, for
+instance) has one loop for all of them: one at-exit loop, one `run`, one
+fd for another event loop to watch.
 
 Native scheduling has two modes. In both, OCaml callbacks run on the OCaml
 thread only. With `fetch.direct`, a callback resumes the suspended
 continuation.
 
-- **Local mode** (default): tokio runs on the OCaml thread, inside
-  `Fetch.run` and the at-exit loop below, and a finished request's task calls
-  its callback directly. No threads, no hand-off: the fastest mode, for
-  programs that let fetch drive the loop.
-- **Background mode** (`Fetch.use_external_loop ()`, done by `fetch.lwt` and
-  `fetch.eio`): tokio runs on a background thread and never touches OCaml
-  values. A finished request goes into a queue and makes an eventfd (a pipe
-  outside Linux) readable; the program's own event loop then calls
-  `Fetch.dispatch`, which runs the callbacks. Each response crosses threads,
-  which costs some throughput on small requests.
+- **Local mode** (default): tokio runs on the OCaml thread, when the loop has
+  nothing else to do, and a finished request's task calls its callback
+  directly. No threads, no hand-off: the fastest mode, for programs that let
+  the loop run. tokio also watches the loop's wakeup fd, and gives the hand
+  back as soon as another source has work (idb results, for instance).
+- **Background mode** (once an external loop drives evloop's, as with
+  `fetch.lwt`, `fetch.eio` or `Fetch.use_external_loop ()`): tokio runs on a
+  background thread and never touches OCaml values. A finished request goes
+  into a queue and makes the loop's wakeup fd readable; the loop's next turn
+  runs the callbacks. Each response crosses threads, which costs some
+  throughput on small requests.
 
 ## The event loop at exit
 
 On JS the host keeps running its event loop after the program's top level
-returns. On native, the first request registers an `at_exit` handler that
-calls `Fetch.run`, which gives the same behaviour. Both backends then agree on
-the edge cases (checked by `test/`):
+returns. On native, the first request registers evloop's `at_exit` handler,
+which runs the loop, which gives the same behaviour. Both backends then agree
+on the edge cases (checked by `test/`):
 
 | situation                                   | result                                   |
 |---------------------------------------------|------------------------------------------|
@@ -117,24 +125,26 @@ the edge cases (checked by `test/`):
 | a callback calls `exit n`                   | exits with `n`, pending requests dropped |
 | a callback raises                           | `Fatal error: exception ...`, code 2     |
 
-On native, "dies at once" relies on a hook: `Fetch` wraps the runtime's
+On native, "dies at once" relies on a hook: evloop wraps the runtime's
 `Printexc.handle_uncaught_exception` named value to know the program is
 crashing, since exit handlers also run in that case. On JS, exceptions from
 callbacks are reported through js_of_ocaml's `caml_fatal_uncaught_exception`
 and node then exits with code 2. In a browser, the error is reported and the
 page keeps running.
 
-`Fetch.run ()` is still available to wait at a specific point (native only;
-it returns immediately on JS). There, an exception from a callback is
-re-raised by `run` and can be caught. In background mode, it sleeps with the
-OCaml runtime lock released, so other OCaml threads keep running.
+`Fetch.run ()` (`Evloop.run`) is still available to wait at a specific point
+(native only; it returns immediately on JS): it runs every source until none
+has work left. There, an exception from a callback is re-raised by `run` and
+can be caught. When it waits on the wakeup fd, it sleeps with the OCaml
+runtime lock released, so other OCaml threads keep running.
 
 ## Lwt, Eio and servers
 
 The at-exit loop only runs when the program ends, so a program whose event
 loop never returns (a Lwt or Eio server) must use background mode and deliver
-responses from its own loop. `fetch.lwt` and `fetch.eio` do both (they switch
-to background mode when they are linked, before any request):
+responses from its own loop. `fetch.lwt` and `fetch.eio` do both, through
+`evloop.lwt` and `evloop.eio` (linking them makes evloop's loop external,
+before any request):
 
 ```ocaml
 (* Lwt *)
@@ -144,14 +154,18 @@ let* r = Fetch_lwt.req "https://example.com" in ...
 match Fetch_eio.req "https://example.com" with ...
 ```
 
-They watch `Fetch.fd ()` (an eventfd that becomes readable when responses
-are ready) and call `Fetch.dispatch ()`, which runs the callbacks of every
-ready response. Any other event loop can do the same: call
-`Fetch.use_external_loop ()` at startup, then watch `Fetch.fd ()` and
-dispatch while `Fetch.pending ()` is not 0 (`test/test_background.ml` does
-it with `Unix.select`). Requests started before the switch still complete, but only
-through `Fetch.run` or the at-exit loop. On JS/Wasm the host event loop
-delivers responses by itself (`Fetch.fd` is `None`, the rest does nothing).
+Lwt dispatches from one watcher for the whole program; with Eio, the fiber
+waiting for a response dispatches meanwhile, or `Evloop_eio.start ~sw` runs
+a dispatching fiber for the whole program (needed by idb). They watch
+`Fetch.fd ()` (`Evloop.fd`: an eventfd that becomes readable when work is
+ready) and call `Fetch.dispatch ()` (`Evloop.dispatch`), which runs the
+callbacks of every ready response, and the work of the other sources. Any
+other event loop can do the same: call `Fetch.use_external_loop ()` at
+startup, then watch `Fetch.fd ()` and dispatch while `Fetch.pending ()` is
+not 0 (`test/test_background.ml` does it with `Unix.select`). Requests
+started before the switch still complete, but only through `Fetch.run` or
+the at-exit loop. On JS/Wasm the host event loop delivers responses by
+itself (`Fetch.fd` is `None`, the rest does nothing).
 
 ## ez_api engines
 
@@ -181,6 +195,8 @@ opam pin add fetch <url of this git repository>
 Requirements:
 
 - **OCaml ≥ 4.12**; OCaml 5 for `fetch.direct` (skipped on older versions).
+- **evloop** (the event loop, shared with other libraries): install it
+  first (`opam pin add evloop <its repository>`).
 - **Rust ≥ 1.88** with cargo (`conf-rust-2021` checks that cargo exists,
   but distribution packages are often older; use [rustup](https://rustup.rs)
   in that case, cargo then reports the required version clearly).
@@ -196,6 +212,10 @@ Requirements:
 Build requirements: OCaml ≥ 5 (≥ 4.12 without `fetch.direct`), dune, cargo,
 js_of_ocaml and wasm_of_ocaml (with binaryen), and node to run the JS and
 Wasm outputs. In this setup, all of these live in the `bench` opam switch.
+
+`make` builds against evloop's source tree in `../evloop` (built there with
+`make`) when it exists, through `OCAMLPATH`; otherwise against the installed
+evloop.
 
 ```sh
 make                  # dune build: native, bytecode, JS and Wasm

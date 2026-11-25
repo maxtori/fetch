@@ -45,13 +45,11 @@ extern int fetch_rs_stream_read(uint64_t id, double timeout, void *ctx,
 extern void fetch_rs_stream_close(uint64_t id);
 extern void fetch_rs_cancel_timer(uint64_t id);
 /* local mode */
-extern int fetch_rs_run_local(void);
+extern int fetch_rs_run_local_until(int fd);
 /* background mode */
 extern void fetch_rs_use_background(void);
-extern int fetch_rs_fd(void);
+extern void fetch_rs_set_wake_fd(int fd);
 extern int fetch_rs_dispatch(void);
-extern void fetch_rs_wait(void);
-extern size_t fetch_rs_bg_pending(void);
 
 /* What the OCaml callback receives. */
 enum kind {
@@ -299,15 +297,6 @@ value caml_fetch_cancel_timer(value id) {
   return Val_unit;
 }
 
-/* string -> Obj.t option: look up a value registered with Callback.register
-   (or by the stdlib). */
-value caml_fetch_named_value(value name) {
-  CAMLparam1(name);
-  const value *v = caml_named_value(String_val(name));
-  if (v == NULL) CAMLreturn(Val_none);
-  CAMLreturn(caml_alloc_some(*v));
-}
-
 static void raise_pending_exn(void) {
   if (pending_exn != Val_unit) {
     value e = pending_exn;
@@ -326,40 +315,28 @@ value caml_fetch_dispatch(value unit) {
   CAMLreturn(Val_unit);
 }
 
-/* unit -> unit: run until no request is pending.
-   - local mode: tokio runs on this thread until its requests are done; their
-     tasks call the callbacks directly;
-   - background mode: dispatch, then sleep on the wakeup fd (with the runtime
-     lock released, so other OCaml threads can run), until nothing is
-     pending. */
-value caml_fetch_run(value unit) {
-  CAMLparam1(unit);
-  int r = fetch_rs_run_local();
-  if (r == 1) caml_failwith("Fetch.run: already running (nested call)");
-  if (r == 2) caml_failwith("Fetch.run: event loop panicked");
+/* Unix.file_descr -> bool: local mode, run tokio on this thread until its
+   requests are done (their tasks call the callbacks directly), or until the
+   event loop's fd [fd] becomes readable. False if there was nothing to run.
+   Re-raises an exception escaping a callback. */
+value caml_fetch_run_local_until(value fd) {
+  CAMLparam1(fd);
+  int r = fetch_rs_run_local_until(Int_val(fd));
+  if (r == 1) caml_failwith("Fetch: the event loop is already running (nested call)");
+  if (r == 2) caml_failwith("Fetch: event loop panicked");
   raise_pending_exn();
-  while (fetch_rs_bg_pending() > 0) {
-    if (fetch_rs_dispatch() != 0) break;
-    if (fetch_rs_bg_pending() == 0) break;
-    caml_enter_blocking_section();
-    fetch_rs_wait();
-    caml_leave_blocking_section();
-  }
-  raise_pending_exn();
-  CAMLreturn(Val_unit);
+  CAMLreturn(Val_bool(r != 3));
+}
+
+/* Unix.file_descr -> unit: background completions make this fd (the event
+   loop's) readable. */
+value caml_fetch_set_wake_fd(value fd) {
+  fetch_rs_set_wake_fd(Int_val(fd));
+  return Val_unit;
 }
 
 /* unit -> unit: use background mode for the requests started from now on. */
 value caml_fetch_use_background(value unit) {
   fetch_rs_use_background();
   return Val_unit;
-}
-
-/* unit -> Unix.file_descr option: switches to background mode and returns the
-   fd that becomes readable when responses are ready. */
-value caml_fetch_fd(value unit) {
-  CAMLparam1(unit);
-  int fd = fetch_rs_fd();
-  if (fd < 0) caml_failwith("Fetch: could not start the HTTP runtime");
-  CAMLreturn(caml_alloc_some(Val_int(fd)));
 }

@@ -1,3 +1,10 @@
+# evloop, from its source tree (../evloop, built with `make` there), unless
+# it is installed: dune finds libraries in OCAMLPATH.
+EVLOOP ?= $(abspath ../evloop)
+ifneq ($(wildcard $(EVLOOP)/_build/install/default/lib),)
+export OCAMLPATH := $(EVLOOP)/_build/install/default/lib$(if $(OCAMLPATH),:$(OCAMLPATH))
+endif
+
 # Pass Cargo features to the Rust backend with e.g. `make FETCH_RS_FEATURES=gzip`.
 export FETCH_RS_FEATURES
 

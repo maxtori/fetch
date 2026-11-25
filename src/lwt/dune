@@ -2,4 +2,4 @@
  (name fetch_lwt)
  (public_name fetch.lwt)
  (optional)
- (libraries fetch lwt lwt.unix))
+ (libraries fetch evloop.lwt lwt))

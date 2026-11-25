@@ -23,9 +23,9 @@ val req_bs :
 (** Body as a Bigarray, without copying (see {!Fetch.req_bs}). *)
 
 val watch : unit -> unit
-(** Make sure the Lwt loop dispatches pending requests. Called by the
-    functions above; call it yourself after starting requests with
-    {!Fetch.req} / {!Fetch.req_bs} from Lwt code. *)
+(** Does nothing (kept for compatibility): the Lwt loop dispatches every
+    request, including those started with {!Fetch.req} / {!Fetch.req_bs}
+    (evloop.lwt watches Evloop's fd for the whole program). *)
 
 (** {1 Streaming responses} (see {!Fetch.req_stream}) *)
 

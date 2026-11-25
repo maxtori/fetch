@@ -2,17 +2,19 @@
 //! two modes (chosen per program, see `fetch_rs_use_background`):
 //!
 //! - **Local mode** (default): a current-thread tokio runtime on the OCaml
-//!   thread. Requests only progress inside `fetch_rs_run_local` (`Fetch.run`
-//!   and the at-exit loop), which blocks the thread in tokio; when a request
-//!   is done, its task calls the C/OCaml callback directly. No threads, no
-//!   hand-off: the fastest mode for programs that let fetch drive the loop.
+//!   thread. Requests only progress inside `fetch_rs_run_local_until`, which
+//!   Evloop's loop calls when it has nothing else to do: it blocks the thread
+//!   in tokio until the requests are done, or until the event loop's fd
+//!   becomes readable (another source has work). When a request is done,
+//!   its task calls the C/OCaml callback directly. No threads, no hand-off:
+//!   the fastest mode for programs that let the loop run.
 //!
 //! - **Background mode**, for programs running their own event loop (Lwt, Eio,
 //!   a server...): tokio runs on a background thread for the whole life of the
 //!   program, never touching OCaml values. A finished request is pushed onto a
-//!   completion queue, and an eventfd (a pipe on non-Linux systems) becomes
-//!   readable. The OCaml thread delivers completions with `fetch_rs_dispatch`
-//!   when its event loop sees the fd readable (`fetch_rs_fd`).
+//!   completion queue, and the event loop's fd (`fetch_rs_set_wake_fd`)
+//!   becomes readable. The OCaml thread delivers completions with
+//!   `fetch_rs_dispatch` on the loop's next turn.
 //!
 //! Timers (`fetch_rs_after`) are tasks too, delivered the same way.
 //!
@@ -25,7 +27,7 @@ use std::ffi::{c_int, c_void};
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -266,13 +268,23 @@ where
     });
 }
 
-/// Run local-mode requests until none is pending, or until a callback asks to
-/// stop. Returns 0 on normal exit, 1 if called re-entrantly (from a callback),
-/// 2 if the runtime panicked.
+/// A raw fd, for AsyncFd.
+struct RawFd(c_int);
+
+impl std::os::fd::AsRawFd for RawFd {
+    fn as_raw_fd(&self) -> c_int {
+        self.0
+    }
+}
+
+/// Run local-mode requests until none is pending, until a callback asks to
+/// stop, or until `fd` becomes readable (the event loop has other work;
+/// -1: never). Returns 0 then, 1 if called re-entrantly (from a callback),
+/// 2 if the runtime panicked, 3 if there was nothing to run.
 #[no_mangle]
-pub extern "C" fn fetch_rs_run_local() -> c_int {
+pub extern "C" fn fetch_rs_run_local_until(fd: c_int) -> c_int {
     if LOCAL_PENDING.with(|p| p.get()) == 0 {
-        return 0;
+        return 3;
     }
     if RUNNING.with(|r| r.replace(true)) {
         return 1;
@@ -283,8 +295,24 @@ pub extern "C" fn fetch_rs_run_local() -> c_int {
         let local = LOCAL.with(|l| *l);
         let wake = WAKE.with(|w| w.clone());
         rt.block_on(local.run_until(async move {
+            // registered for this call only (deregistered when dropped)
+            let other = if fd >= 0 {
+                // Safety: the event loop's fd stays open for the life of the
+                // program, so longer than this registration.
+                unsafe {
+                    tokio::io::unix::AsyncFd::register_with_interest(RawFd(fd), tokio::io::Interest::READABLE).ok()
+                }
+            } else {
+                None
+            };
             while !STOP.with(|s| s.get()) && LOCAL_PENDING.with(|p| p.get()) > 0 {
-                wake.notified().await;
+                match &other {
+                    Some(other) => tokio::select! {
+                        _ = wake.notified() => {}
+                        r = other.readable() => if r.is_ok() { break },
+                    },
+                    None => wake.notified().await,
+                }
             }
         }))
     }));
@@ -347,11 +375,25 @@ fn wakeup_fds() -> Result<(c_int, c_int), String> {
     Ok((fds[0], fds[1]))
 }
 
+/// The event loop's fd (Evloop), if given: completions make it readable
+/// instead of ours.
+static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
+
+/// Completions make `fd` readable (the event loop's).
+#[no_mangle]
+pub extern "C" fn fetch_rs_set_wake_fd(fd: c_int) {
+    WAKE_FD.store(fd, Ordering::SeqCst);
+}
+
 /// Make the fd readable (non-blocking; if a wakeup is already pending, the
 /// write may fail harmlessly).
 fn signal(s: &Shared) {
     let one: u64 = 1; // an eventfd needs 8 bytes; a pipe takes them too
-    unsafe { libc::write(s.write_fd, &one as *const u64 as *const c_void, 8) };
+    let fd = match WAKE_FD.load(Ordering::SeqCst) {
+        -1 => s.write_fd,
+        fd => fd,
+    };
+    unsafe { libc::write(fd, &one as *const u64 as *const c_void, 8) };
 }
 
 /// Make the fd non-readable again.
@@ -426,17 +468,6 @@ pub extern "C" fn fetch_rs_use_background() {
     BACKGROUND.store(true, Ordering::SeqCst);
 }
 
-/// Switch to background mode and return the fd to watch (starting the
-/// background thread), or -1 if it could not be started.
-#[no_mangle]
-pub extern "C" fn fetch_rs_fd() -> c_int {
-    fetch_rs_use_background();
-    match shared() {
-        Ok(s) => s.read_fd,
-        Err(_) => -1,
-    }
-}
-
 /// Deliver every completed background request, on the calling (OCaml) thread.
 /// Never blocks. Returns 0, or 1 if a callback asked to stop (the remaining
 /// completions stay queued and the fd is signalled again).
@@ -459,26 +490,6 @@ pub extern "C" fn fetch_rs_dispatch() -> c_int {
             return 1;
         }
     }
-}
-
-/// Block until a background completion may be available. Call it with the
-/// OCaml runtime lock released.
-#[no_mangle]
-pub extern "C" fn fetch_rs_wait() {
-    let Some(Ok(s)) = SHARED.get() else { return };
-    let mut p = libc::pollfd { fd: s.read_fd, events: libc::POLLIN, revents: 0 };
-    loop {
-        let r = unsafe { libc::poll(&mut p, 1, -1) };
-        if r >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
-            return;
-        }
-    }
-}
-
-/// Background requests started and not yet delivered.
-#[no_mangle]
-pub extern "C" fn fetch_rs_bg_pending() -> usize {
-    BG_PENDING.load(Ordering::SeqCst)
 }
 
 // ------------------------------------------------------------------ requests

@@ -15,7 +15,8 @@ crate-type = ["staticlib", "cdylib"]
 gzip = ["reqwest/gzip"]
 
 [dependencies]
-tokio = { version = "1", features = ["rt", "sync"] }
+# net + macros: waiting on the event loop's fd (AsyncFd, select!) in local mode
+tokio = { version = "1", features = ["rt", "sync", "net", "macros"] }
 libc = "0.2"
 # TLS: rustls with the ring crypto provider (installed in lib.rs), and the
 # platform certificate verifier. No aws-lc.

@@ -1,5 +1,5 @@
 // JavaScript implementation of the Fetch primitives (js_of_ocaml).
-// The JS event loop does the scheduling; [caml_fetch_run] is a no-op.
+// The JS event loop does the scheduling.
 
 //Provides: caml_fetch_callback
 //Requires: caml_callback, caml_fatal_uncaught_exception
@@ -238,11 +238,6 @@ function caml_fetch_cancel_timer(timer) {
   return 0;
 }
 
-//Provides: caml_fetch_run
-function caml_fetch_run(_unit) {
-  return 0;
-}
-
 //Provides: caml_fetch_dispatch
 function caml_fetch_dispatch(_unit) {
   return 0;
@@ -253,12 +248,13 @@ function caml_fetch_use_background(_unit) {
   return 0;
 }
 
-//Provides: caml_fetch_fd
-function caml_fetch_fd(_unit) {
+//Provides: caml_fetch_run_local_until
+// Native local mode only: the JS event loop runs requests. Nothing to run.
+function caml_fetch_run_local_until(_fd) {
   return 0;
 }
 
-//Provides: caml_fetch_named_value
-function caml_fetch_named_value(_name) {
+//Provides: caml_fetch_set_wake_fd
+function caml_fetch_set_wake_fd(_fd) {
   return 0;
 }

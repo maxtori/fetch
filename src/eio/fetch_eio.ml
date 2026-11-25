@@ -1,27 +1,11 @@
-(* Requests must run in the background, dispatched from the Eio loop. Done
-   when this module is initialised, i.e. before the program's first request. *)
-let () = Fetch.use_external_loop ()
-
-(* Each waiting fiber races its own result against pumping the wakeup fd:
-   whichever fiber sees the fd readable dispatches every ready response
-   (resolving other fibers' promises too). A fiber stops pumping as soon as
-   its own result has arrived. No switch or background fiber needed. *)
+(* The Eio loop drives Evloop's (evloop.eio), which runs fetch's requests
+   (in background mode: linking evloop.eio makes the loop external). Without
+   Evloop_eio.start, the waiting fiber dispatches until its result is in. *)
 
 let await start =
   let p, r = Eio.Promise.create () in
   start (Eio.Promise.resolve r);
-  match Fetch.fd () with
-  | None -> Eio.Promise.await p
-  | Some fd ->
-    Eio.Fiber.first
-      (fun () -> Eio.Promise.await p)
-      (fun () ->
-         let rec pump () =
-           Eio_unix.await_readable fd;
-           Fetch.dispatch ();
-           pump ()
-         in
-         pump ())
+  Evloop_eio.await p
 
 let req ?meth ?headers ?body ?timeout url = await (Fetch.req ?meth ?headers ?body ?timeout url)
 let req_bs ?meth ?headers ?body ?timeout url = await (Fetch.req_bs ?meth ?headers ?body ?timeout url)

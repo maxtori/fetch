@@ -1,7 +1,7 @@
 (library
  (name fetch)
  (public_name fetch)
- (libraries unix)
+ (libraries unix evloop)
  (foreign_stubs (language c) (names fetch_stubs))
  (foreign_archives fetch_rs)
  (c_library_flags (-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc))
@@ -12,10 +12,11 @@
 
 (rule
  (targets libfetch_rs.a dllfetch_rs.so)
- (deps rust/Cargo.toml rust/Cargo.lock (glob_files_rec rust/src/**.rs))
+ (deps localize.sh rust/Cargo.toml rust/Cargo.lock (glob_files_rec rust/src/**.rs))
  (action
   (no-infer
    (progn
     (run cargo build --release --quiet --locked --manifest-path rust/Cargo.toml --features %{env:FETCH_RS_FEATURES=})
-    (copy rust/target/release/libfetch_rs.a libfetch_rs.a)
+    ; only the C entry points global: see localize.sh
+    (run sh localize.sh rust/target/release/libfetch_rs.a libfetch_rs.a fetch_rs_)
     (copy rust/target/release/libfetch_rs.so dllfetch_rs.so)))))

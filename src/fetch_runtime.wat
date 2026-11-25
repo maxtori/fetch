@@ -442,8 +442,12 @@
     (global.set $pending_res
       (ref.null eq)))
 
-  ;; The JS event loop does the scheduling.
-  (func (export "caml_fetch_run") (param $_unit (ref eq)) (result (ref eq))
+  ;; The JS event loop does the scheduling: nothing to run here (false).
+  (func (export "caml_fetch_run_local_until") (param $_fd (ref eq)) (result (ref eq))
+    (ref.i31
+      (i32.const 0)))
+
+  (func (export "caml_fetch_set_wake_fd") (param $_fd (ref eq)) (result (ref eq))
     (ref.i31
       (i32.const 0)))
 
@@ -452,15 +456,6 @@
     (ref.i31
       (i32.const 0)))
 
-  (func (export "caml_fetch_fd") (param $_unit (ref eq)) (result (ref eq))
-    (ref.i31
-      (i32.const 0)))
-
   (func (export "caml_fetch_use_background") (param $_unit (ref eq)) (result (ref eq))
-    (ref.i31
-      (i32.const 0)))
-
-  ;; Only used by the native at-exit loop; never called here. Returns None.
-  (func (export "caml_fetch_named_value") (param $_name (ref eq)) (result (ref eq))
     (ref.i31
       (i32.const 0))))
