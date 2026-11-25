@@ -2,4 +2,4 @@
  (name fetch_direct)
  (public_name fetch.direct)
  (enabled_if (>= %{ocaml_version} 5.0))
- (libraries fetch))
+ (libraries fetch evloop.direct))

@@ -173,7 +173,7 @@ let race_closes_stream () =
   Alcotest.(check bool) "quickly" true (t < 1.)
 
 let race_empty () =
-  Alcotest.check_raises "empty list" (Invalid_argument "Fetch_direct.race: empty list") (fun () ->
+  Alcotest.check_raises "empty list" (Invalid_argument "Evloop_direct.race: empty list") (fun () ->
     ignore (in_fiber (fun () -> Fetch_direct.race [])))
 
 let () =

@@ -8,7 +8,9 @@ Libraries:
   Uses no effects: OCaml ≥ 4.12.
 - `fetch.direct`: direct style on top of it, using OCaml 5 effect handlers
   (`Fetch_direct.spawn`, `req`, `req_bs`, `sleep`, `fork`, `all`, `both`,
-  `race` with cancellation of the losers, `Promise`, `suspend`). Built on OCaml ≥ 5 only.
+  `race` with cancellation of the losers, `Promise`, `suspend`). The fibers
+  are evloop's (`Evloop_direct`), shared with other libraries such as
+  `idb.direct`: one fiber can wait for both. Built on OCaml ≥ 5 only.
 - `fetch.lwt` / `fetch.eio` (native): requests driven by a Lwt or Eio event
   loop, for programs whose main loop never returns (servers). Built when lwt /
   eio are installed (any lwt; eio ≥ 0.2, which itself needs OCaml 5).
