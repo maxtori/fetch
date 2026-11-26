@@ -2,8 +2,6 @@
    (in background mode: linking evloop.lwt makes the loop external). *)
 let () = Evloop_lwt.linked ()
 
-let watch () = ()
-
 let promise start =
   let p, r = Lwt.wait () in
   start (Lwt.wakeup_later r);

@@ -23,7 +23,6 @@ let run_case name f _switch () =
   let p, r = Lwt.wait () in
   current := Some r;
   f (fun () -> current := None; Lwt.wakeup_later r ());
-  Fetch_lwt.watch ();
   timeout name p
 
 let concurrent_loop_not_blocked _switch () =

@@ -22,11 +22,6 @@ val req_bs :
   (Fetch.bigstring Fetch.response_with, string) result Lwt.t
 (** Body as a Bigarray, without copying (see {!Fetch.req_bs}). *)
 
-val watch : unit -> unit
-(** Does nothing (kept for compatibility): the Lwt loop dispatches every
-    request, including those started with {!Fetch.req} / {!Fetch.req_bs}
-    (evloop.lwt watches Evloop's fd for the whole program). *)
-
 (** {1 Streaming responses} (see {!Fetch.req_stream}) *)
 
 val req_stream :
