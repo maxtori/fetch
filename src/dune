@@ -12,10 +12,10 @@
 
 (rule
  (targets libfetch_rs.a dllfetch_rs.so)
- (deps localize.sh rust/Cargo.toml rust/Cargo.lock (glob_files_rec rust/src/**.rs))
+ (deps %{libexec:evloop:localize.sh} rust/Cargo.toml rust/Cargo.lock (glob_files_rec rust/src/**.rs))
  (action
   (no-infer
    (progn
     (run cargo build --release --quiet --locked --manifest-path rust/Cargo.toml --features %{env:FETCH_RS_FEATURES=})
-    (run sh localize.sh rust/target/release/libfetch_rs.a libfetch_rs.a fetch_rs_)
+    (run sh %{libexec:evloop:localize.sh} rust/target/release/libfetch_rs.a libfetch_rs.a fetch_rs_)
     (copy rust/target/release/libfetch_rs.so dllfetch_rs.so)))))
