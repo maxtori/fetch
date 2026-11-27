@@ -1,6 +1,3 @@
-// JS helpers for the wasm_of_ocaml backend (see fetch_runtime.wat).
-// They only handle plain JS values; OCaml values are built on the Wasm side.
-
 //Provides: caml_fetch_wasm_new_array
 function caml_fetch_wasm_new_array() {
   return [];
@@ -12,9 +9,7 @@ function caml_fetch_wasm_push_header(arr, name, value) {
 }
 
 //Provides: caml_fetch_wasm_after
-// done(ctx) once [seconds] have passed; returns the timer, for
-// caml_fetch_wasm_cancel_timer. setTimeout fires at once for delays over
-// 2^31-1 ms, so long delays are split; the timer holds the current handle.
+
 function caml_fetch_wasm_after(seconds, done, ctx) {
   var MAX = 2147483647;
   var timer = { handle: null };
@@ -35,21 +30,17 @@ function caml_fetch_wasm_cancel_timer(timer) {
 }
 
 //Provides: caml_fetch_wasm_start
-// done(ctx, status, headers, body, error):
-// - success: headers is "name:value\n"... (byte string), body a Uint8Array,
-//   error null;
-// - failure: error is a message string ("timeout" for a timeout).
+
 function caml_fetch_wasm_start(meth, url, headers, body, timeout, done, ctx) {
   var init = { method: meth, headers: headers };
   if (body !== null && body !== undefined) init.body = body;
-  // timeout: seconds, negative for none. AbortSignal.timeout covers the
-  // body too. Over 2^31-1 ms its timer would fire at once: no timeout then.
+
   var signal = null;
   if (timeout >= 0 && timeout * 1000 <= 2147483647)
     init.signal = signal = globalThis.AbortSignal.timeout(Math.round(timeout * 1000));
 
   function error_message(e) {
-    // same message as the native backend
+
     if (signal && signal.aborted && signal.reason === e) return "timeout";
     var msg = String((e && e.message) || e);
     for (var c = e && e.cause; c; c = c.cause)
@@ -60,7 +51,7 @@ function caml_fetch_wasm_start(meth, url, headers, body, timeout, done, ctx) {
   fetch(url, init)
     .then(function (resp) {
       return resp.arrayBuffer().then(function (buf) {
-        // Header names and values are byte strings (chars < 256).
+
         var hs = "";
         resp.headers.forEach(function (v, k) {
           hs += k + ":" + v + "\n";
@@ -79,8 +70,7 @@ function caml_fetch_wasm_start(meth, url, headers, body, timeout, done, ctx) {
 }
 
 //Provides: caml_fetch_wasm_timeout_ms
-// timeout: seconds, negative for none. Over 2^31-1 ms, timers would fire at
-// once: no timeout then.
+
 function caml_fetch_wasm_timeout_ms(timeout) {
   return timeout >= 0 && timeout * 1000 <= 2147483647 ? Math.round(timeout * 1000) : -1;
 }
@@ -95,10 +85,7 @@ function caml_fetch_wasm_error_message(e) {
 
 //Provides: caml_fetch_wasm_stream_open
 //Requires: caml_fetch_wasm_timeout_ms, caml_fetch_wasm_error_message
-// Streams. Returns the stream { ctl, reader, closed }, and calls
-// done(ctx, status, headers, null, error) once the headers have arrived (or
-// on an error: "timeout" if [timeout] seconds pass first). Aborting [ctl]
-// (on close, or on a read timeout) cancels the request or the body.
+
 function caml_fetch_wasm_stream_open(meth, url, headers, body, timeout, done, ctx) {
   var st = { ctl: new globalThis.AbortController(), reader: null, closed: false };
   var init = { method: meth, headers: headers, signal: st.ctl.signal };
@@ -130,11 +117,10 @@ function caml_fetch_wasm_stream_open(meth, url, headers, body, timeout, done, ct
 
 //Provides: caml_fetch_wasm_stream_read
 //Requires: caml_fetch_wasm_timeout_ms, caml_fetch_wasm_error_message
-// done(ctx, kind, chunk, error): kind 1 = a chunk (Uint8Array), 0 = end of
-// the body, 2 = error (a message; "timeout" closes the stream).
+
 function caml_fetch_wasm_stream_read(st, timeout, done, ctx) {
   if (!st.reader) {
-    // no body (e.g. a HEAD request), or closed before: never synchronous
+
     var closed = st.closed;
     globalThis.setTimeout(function () {
       if (closed) done(ctx, 2, null, "closed");

@@ -1,9 +1,3 @@
-(* ez_api engine (EzReqEio) on top of Fetch_eio. [~net] and [~sw] are not
-   used: requests run on fetch's own (tokio) runtime, and only the calling
-   fiber waits. A transport error gives the response [(-1, message, [])],
-   which the typed calls (get0, post0, ...) turn into
-   [Error (-1, `unknown (Some message))], as for the Lwt engines. *)
-
 let has_header name headers =
   List.exists (fun (k, _) -> String.lowercase_ascii k = name) headers
 

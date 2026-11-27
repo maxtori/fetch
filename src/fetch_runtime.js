@@ -1,16 +1,11 @@
-// JavaScript implementation of the Fetch primitives (js_of_ocaml).
-// The JS event loop does the scheduling.
-
 //Provides: caml_fetch_callback
 //Requires: caml_callback, caml_fatal_uncaught_exception
-// Call an OCaml callback from the event loop. An OCaml exception escaping it
-// is reported like an uncaught exception at top level (exit handlers run,
-// "Fatal error: exception ..."), then node exits with code 2, as on native.
+
 function caml_fetch_callback(cb, arg) {
   try {
     caml_callback(cb, [arg]);
   } catch (e) {
-    caml_fatal_uncaught_exception(e); // rethrows non-OCaml (JS) errors
+    caml_fatal_uncaught_exception(e);
     var p = globalThis.process;
     if (p && typeof p.exit === "function") p.exit(2);
   }
@@ -18,8 +13,7 @@ function caml_fetch_callback(cb, arg) {
 
 //Provides: caml_fetch_init
 //Requires: caml_jsstring_of_string, caml_uint8_array_of_string
-// The options of a fetch call. OCaml array: [0, e1, ..., en]; tuple:
-// [0, a, b]; Some v: [0, v]; None: 0.
+
 function caml_fetch_init(meth, headers, body) {
   var h = [];
   for (var i = 1; i < headers.length; i++)
@@ -41,7 +35,7 @@ function caml_fetch_error_message(e) {
 }
 
 //Provides: caml_fetch_headers_string
-// Header names and values are byte strings (chars < 256).
+
 function caml_fetch_headers_string(resp) {
   var hs = "";
   resp.headers.forEach(function (v, k) {
@@ -51,8 +45,7 @@ function caml_fetch_headers_string(resp) {
 }
 
 //Provides: caml_fetch_timeout_ms
-// timeout: seconds, negative for none. Over 2^31-1 ms, timers would fire at
-// once: no timeout then.
+
 function caml_fetch_timeout_ms(timeout) {
   return timeout >= 0 && timeout * 1000 <= 2147483647 ? Math.round(timeout * 1000) : -1;
 }
@@ -62,19 +55,16 @@ function caml_fetch_timeout_ms(timeout) {
 //Requires: caml_string_of_jsbytes, caml_string_of_uint8_array, caml_ba_create_unsafe
 //Requires: caml_fetch_callback, caml_fetch_init, caml_fetch_error_message
 //Requires: caml_fetch_headers_string, caml_fetch_timeout_ms
-// Shared by both primitives. The OCaml side receives
-//   Ok (status, headers, body) | Error msg
-// where headers is "name:value\n"... (byte string, as on native) and body is
-// a string, or a char Bigarray wrapping the response buffer (no copy).
+
 function caml_fetch_do_request(meth, url, headers, body, timeout, cb, bigstring) {
   var init = caml_fetch_init(meth, headers, body);
-  // AbortSignal.timeout covers the body too.
+
   var ms = caml_fetch_timeout_ms(timeout);
   var signal = null;
   if (ms >= 0) init.signal = signal = globalThis.AbortSignal.timeout(ms);
 
   function error_message(e) {
-    // same message as the native backend
+
     if (signal && signal.aborted && signal.reason === e) return "timeout";
     return caml_fetch_error_message(e);
   }
@@ -88,13 +78,13 @@ function caml_fetch_do_request(meth, url, headers, body, timeout, cb, bigstring)
     .then(
       function (r) {
         var b = bigstring
-          ? caml_ba_create_unsafe(12 /* char */, 0 /* c_layout */, [r[2].length], r[2])
+          ? caml_ba_create_unsafe(12 , 0 , [r[2].length], r[2])
           : caml_string_of_uint8_array(r[2]);
-        // Ok (status, headers, body)
+
         caml_fetch_callback(cb, [0, [0, r[0], caml_string_of_jsbytes(r[1]), b]]);
       },
       function (e) {
-        // Error msg
+
         caml_fetch_callback(cb, [1, caml_string_of_jsstring(error_message(e))]);
       },
     );
@@ -117,10 +107,7 @@ function caml_fetch_request_bigstring(meth, url, headers, body, timeout, cb) {
 //Requires: caml_jsstring_of_string, caml_string_of_jsstring, caml_string_of_jsbytes
 //Requires: caml_fetch_callback, caml_fetch_init, caml_fetch_error_message
 //Requires: caml_fetch_headers_string, caml_fetch_timeout_ms
-// Streams. Returns the stream: { ctl, reader, closed }. The callback gets
-// Ok (status, headers, ()) | Error msg once the headers have arrived; the
-// timeout covers that wait only. Aborting [ctl] (on close, or on a read
-// timeout) cancels the request or the body.
+
 function caml_fetch_stream_open(meth, url, headers, body, timeout, cb) {
   var init = caml_fetch_init(meth, headers, body);
   var st = { ctl: new globalThis.AbortController(), reader: null, closed: false };
@@ -150,14 +137,13 @@ function caml_fetch_stream_open(meth, url, headers, body, timeout, cb) {
 //Provides: caml_fetch_stream_do_read
 //Requires: caml_string_of_jsstring, caml_string_of_uint8_array, caml_ba_create_unsafe
 //Requires: caml_fetch_callback, caml_fetch_error_message, caml_fetch_timeout_ms
-// The callback gets Ok (Some chunk) | Ok None (end) | Error msg. On a
-// timeout, the stream is closed (its request aborted).
+
 function caml_fetch_stream_do_read(st, timeout, cb, bigstring) {
   function deliver(r) {
     caml_fetch_callback(cb, r);
   }
   if (!st.reader) {
-    // no body (e.g. a HEAD request), or closed before: never synchronous
+
     var r = st.closed ? [1, caml_string_of_jsstring("closed")] : [0, 0];
     globalThis.setTimeout(function () { deliver(r); }, 0);
     return 0;
@@ -176,11 +162,11 @@ function caml_fetch_stream_do_read(st, timeout, cb, bigstring) {
       if (done) return;
       done = true;
       globalThis.clearTimeout(timer);
-      if (r.done) return deliver([0, 0]); // Ok None
+      if (r.done) return deliver([0, 0]);
       var c = bigstring
-        ? caml_ba_create_unsafe(12 /* char */, 0 /* c_layout */, [r.value.length], r.value)
+        ? caml_ba_create_unsafe(12 , 0 , [r.value.length], r.value)
         : caml_string_of_uint8_array(r.value);
-      deliver([0, [0, c]]); // Ok (Some chunk)
+      deliver([0, [0, c]]);
     },
     function (e) {
       if (done) return;
@@ -215,9 +201,7 @@ function caml_fetch_stream_close(st) {
 
 //Provides: caml_fetch_after
 //Requires: caml_fetch_callback
-// float -> (unit -> unit) -> timer. setTimeout fires at once for delays
-// over 2^31-1 ms, so long delays are split; the timer object holds the
-// current handle, for caml_fetch_cancel_timer.
+
 function caml_fetch_after(seconds, cb) {
   var MAX = 2147483647;
   var timer = { handle: null };
@@ -249,7 +233,7 @@ function caml_fetch_use_background(_unit) {
 }
 
 //Provides: caml_fetch_run_local_until
-// Native local mode only: the JS event loop runs requests. Nothing to run.
+
 function caml_fetch_run_local_until(_fd) {
   return 0;
 }

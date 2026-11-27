@@ -17,6 +17,5 @@
   (no-infer
    (progn
     (run cargo build --release --quiet --locked --manifest-path rust/Cargo.toml --features %{env:FETCH_RS_FEATURES=})
-    ; only the C entry points global: see localize.sh
     (run sh localize.sh rust/target/release/libfetch_rs.a libfetch_rs.a fetch_rs_)
     (copy rust/target/release/libfetch_rs.so dllfetch_rs.so)))))

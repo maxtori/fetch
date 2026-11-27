@@ -1,5 +1,3 @@
-(* The Lwt loop drives Evloop's (evloop.lwt), which runs fetch's requests
-   (in background mode: linking evloop.lwt makes the loop external). *)
 let () = Evloop_lwt.linked ()
 
 let promise start =

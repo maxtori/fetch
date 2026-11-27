@@ -1,13 +1,9 @@
-(* ez_api engine (EzReq_lwt) on top of Fetch_lwt. Like the other ez_api
-   engines, a non-2xx status gives [Error (code, Some body)] and a transport
-   error [Error (-1, Some message)]. *)
-
 let has_header name headers =
   List.exists (fun (k, _) -> String.lowercase_ascii k = name) headers
 
 let make ?msg ~meth ?(headers = []) ?content_type ?content url =
   Verbose.request ?msg ~meth ?content ~headers url;
-  (* a content-type in [headers] wins over [content_type] *)
+
   let headers =
     match content_type with
     | Some ct when not (has_header "content-type" headers) -> ("Content-Type", ct) :: headers

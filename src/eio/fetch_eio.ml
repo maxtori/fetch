@@ -1,7 +1,3 @@
-(* The Eio loop drives Evloop's (evloop.eio), which runs fetch's requests
-   (in background mode: linking evloop.eio makes the loop external). Without
-   Evloop_eio.start, the waiting fiber dispatches until its result is in. *)
-
 let await start =
   let p, r = Eio.Promise.create () in
   start (Eio.Promise.resolve r);

@@ -1,7 +1,3 @@
-(* fetch in direct style: the fibers are evloop.direct's (shared with other
-   libraries on Evloop's loop, such as idb.direct), plus fetch's requests
-   and timers as suspending functions. *)
-
 include Evloop_direct
 
 let req ?meth ?headers ?body ?timeout url =
@@ -10,9 +6,6 @@ let req ?meth ?headers ?body ?timeout url =
 let req_bs ?meth ?headers ?body ?timeout url =
   suspend (fun resume -> Fetch.req_bs ?meth ?headers ?body ?timeout url resume)
 
-(* Cancelled while waiting for the headers: the stream is closed as soon as
-   it arrives. Cancelled during a read: the stream is closed (where it
-   stands is unknown then). *)
 let req_stream ?meth ?headers ?body ?timeout url =
   let cancelled = ref false in
   suspend
